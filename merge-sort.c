@@ -242,10 +242,11 @@ int** divideArray(int* numbers, int size) {
 	int* rightSize = (int *) malloc(sizeof(int));
 
 	// Definicao de valores para cada size
-	if (size % 2 == 0)
+	if (size % 2 == 0) {
 		*leftSize = ((int)(size/2));
-	else
+	} else {
 		*leftSize = ((int)(size/2))+1;
+	}
 
 	*rightSize = (size - *leftSize);
 
@@ -281,13 +282,13 @@ void populate_array(int* array, int size, int max) {
 }
 
 int informaNumeroMaxDeProcessosNecessarios(int argc, char** argv){
-	int maxProc;
-	if (argc < 3) {
-		maxProc = (int) ((int) NELEMENTS)/2;
-	} else {
-		maxProc = (int) (atoi(argv[2])/2);
-	}
-	return maxProc;
+	int nElem;
+	if (argc < 3)
+		nElem = NELEMENTS;
+	else 
+		nElem = (atoi(argv[2]));
+
+	return nElem/2;
 }
 
 void excluirProcessosDesnecessarios(int maxProc) {
