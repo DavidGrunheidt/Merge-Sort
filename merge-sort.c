@@ -244,8 +244,10 @@ int** divideArray(int* numbers, int size) {
 	// Definicao de valores para cada size
 	if (size % 2 == 0) {
 		*leftSize = ((int)(size/2));
+		if (*leftSize % 2 != 0)
+			*leftSize += 1;
 	} else {
-		*leftSize = ((int)(size/2))+1;
+		*leftSize = ((int)(size/2))-1;
 	}
 
 	*rightSize = (size - *leftSize);
