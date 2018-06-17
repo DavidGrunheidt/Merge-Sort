@@ -307,6 +307,8 @@ void excluirProcessosDesnecessarios(int maxProc) {
 
 		if (myCOMM == MPI_COMM_NULL) {
 			if (rank > 0) {
+				printf("Rank %d finalizado \n", rank);
+				fflush(stdout);
 				MPI_Finalize();
 				exit(0);
 			} else {
