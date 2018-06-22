@@ -42,11 +42,11 @@ void recursive_merge_sort(int* tmp, int begin, int end, int* numbers);
 
 // Funcoes para comunicacao de processos e funcoes auxiliares a estas
 void receiveInfos();
+void sortBack(int *rightArray, int rightSize);
 void recursiveDivideArrayReceived(int* arrayReceived, int arraySize);
 int** divideArray(int* numbers, int size);
 void receiveArrayToDivide();
 void sendInfosToProcess(int *rightArray, int rightSize, int dest);
-void letsSortThisThing (int* rightArray, int rightSize, int* leftArray, int leftSize);
 void excluirProcessosDesnecessarios(int maxProc);
 int informaNumeroMaxDeProcessosNecessarios(int argc, char** argv);
 
@@ -169,16 +169,14 @@ void merge_sortWithTwo(int *arrayLeft, int sizeLeft, int *arrayRight, int sizeRi
 		tmpAux1 = malloc(sizeLeft * sizeof(int));
 		memcpy(tmpAux1, arrayLeft, sizeLeft * sizeof(int));
 		recursive_merge_sort(tmpAux1, 0, sizeLeft, arrayLeft);
+		free(tmpAux1);
 	}
 	if (sizeRight > 1) {
 		tmpAux2 = malloc(sizeRight * sizeof(int));
 		memcpy(tmpAux2, arrayRight, sizeRight * sizeof(int));
 		recursive_merge_sort(tmpAux2, 0, sizeRight, arrayRight);
+		free(tmpAux2);
 	}
-	print_array(arrayLeft, sizeLeft);
-	free(tmpAux1);
-	print_array(arrayRight, sizeRight);
-	free(tmpAux2);
 	mergeWithTwo(arrayLeft, arrayRight, sizeLeft, sizeRight, tmp);
 }
 
@@ -229,21 +227,23 @@ void recursiveDivideArrayReceived(int* arrayReceived, int arraySize) {
 		}
 
 		int* tmp = malloc(arraySize * sizeof(int));
-		memcpy(tmp, arrayReceived, arraySize * sizeof(int));
 		merge_sortWithTwo(resp[1], *resp[0], resp[3], *resp[2], tmp);
-		//print_array(tmp, arraySize); 
+		print_array(tmp, arraySize);
+		sortBack(tmp, arraySize);
 	}
-
-
-
 }
 
-void letsSortThisThing (int* rightArray, int rightSize, int* leftArray, int leftSize) {
+void sortBack(int *arrayLeft, int sizeLeft) {
+	//int rankSource = 
 
-}
 
+	//
+	int sizeRight;
+	//
+	int *arrayRight;
 
-void receiveArrayToSort() {
+	int *tmp = malloc((sizeLeft + sizeRight) * sizeof(int));
+	mergeWithTwo(arrayLeft, sizeLeft, arrayRight, sizeRight, tmp);
 
 }
 
