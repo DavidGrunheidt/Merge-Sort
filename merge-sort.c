@@ -11,9 +11,6 @@
  * Todas as Macros pré-definidas devem ser recebidas como parâmetros de
  * execução da sua implementação paralela!! 
  ***/
-#ifndef DEBUG
-#define DEBUG 0
-#endif
 
 #ifndef NELEMENTS
 #define NELEMENTS 100
@@ -27,22 +24,28 @@
 #define PRINT 1
 #endif
 
-void debug(const char* msg, ...);
-int test();
-
+// Funcoes de inicializacao e verificacao de variaveis
 void initializeVariables(int argc, char ** argv, int* seed, int* max_val, int* print, size_t *arr_size);
-void populate_array(int* array, int size, int max);
+void populate_array(int* array, int size, int max, int seed);
 void print_array(int* array, int size);
+
+// Funcoes quanto a parte de merge sort do programa (adequado tanto para
+// 1 processo quanto para varios, com partes que recebem tanto 1 array
+// como 2 arrays)
 void recursive_merge_sort(int* tmp, int begin, int end, int* numbers);
-void merge(int* numbers, int begin, int middle, int end, int * sorted);
-void merge_sort(int* numbers, int size, int * tmp);
+void mergeWithTwo(int* numbersLeft, int* numbersRight, int sizeLeft, int sizeRight, int * sorted);
+void mergeWithOne(int* numbers, int begin, int middle, int end, int * sorted);
+void merge_sortWithTwo(int *arrayLeft, int sizeLeft, int *arrayRight, int sizeRight, int *tmp);
+void merge_sortWithOne(int* numbers, int size, int * tmp);
 void recursive_merge_sort(int* tmp, int begin, int end, int* numbers);
 
-void receiveArrayToDivide();
+
+// Funcoes para comunicacao de processos e funcoes auxiliares a estas
+void receiveInfos();
 void recursiveDivideArrayReceived(int* arrayReceived, int arraySize);
 int** divideArray(int* numbers, int size);
+void receiveArrayToDivide();
 void sendInfosToProcess(int *rightArray, int rightSize, int dest);
-void  comunicarStep();
 void letsSortThisThing (int* rightArray, int rightSize, int* leftArray, int leftSize);
 void excluirProcessosDesnecessarios(int maxProc);
 int informaNumeroMaxDeProcessosNecessarios(int argc, char** argv);
@@ -56,12 +59,9 @@ MPI_Comm myCOMM;
 // step indica o nivel atual que a arvore de processos se encontra
 // activated indica ao processo se ele esta realizando divisao de um vetor
 // Sequential indica se só existe um processo (realiza sequencial)
-int step, activated, sequential;
+int step, sequential;
 
 int main (int argc, char ** argv) {
-	if (DEBUG > 0)
-		return test();
-
 	int seed, max_val, print;
 	int * sortable;
 	int * tmp;
@@ -69,8 +69,8 @@ int main (int argc, char ** argv) {
 
 	// Seta variaveis de controle do nivel da arvore e signal ativado
 	// para todos os processos (pois nivel = 0 e nenhuma esta ativada)
-	step = 0;
-	activated = 0;
+	if (rank == 0)
+		step = 0;
 
 	/////////////////// Inicio da regiao paralela MPI//////////////////
 	MPI_Init(&argc, &argv);
@@ -91,7 +91,7 @@ int main (int argc, char ** argv) {
 		tmp 	 = malloc(arr_size*sizeof(int));
 
 		// Inserção de valores no array original
-		populate_array(sortable, arr_size, max_val);
+		populate_array(sortable, arr_size, max_val, seed);
 		memcpy(tmp, sortable, arr_size*sizeof(int));
 
 		if (print)
@@ -100,7 +100,7 @@ int main (int argc, char ** argv) {
 		if ((!sequential) && (quant_processes > 1)) {
 			recursiveDivideArrayReceived(sortable, arr_size);
 		} else {
-			merge_sort(sortable, arr_size, tmp);
+			merge_sortWithOne(sortable, arr_size, tmp);
 			if (print)
 				print_array(tmp, arr_size);
 
@@ -109,7 +109,7 @@ int main (int argc, char ** argv) {
 		}
 	} else {
 		if (rank > 0)
-			comunicarStep();
+			receiveArrayToDivide();
 	}
 
 	MPI_Finalize();
@@ -120,12 +120,24 @@ int main (int argc, char ** argv) {
  * Orderly merges two int arrays (numbers[begin..middle] and numbers[middle..end]) into one (sorted).
  * \retval: merged array -> sorted
  */
-void merge(int* numbers, int begin, int middle, int end, int * sorted) {
+void mergeWithTwo(int* numbersLeft, int *numbersRight, int sizeLeft, int sizeRight, int * sorted) {
+	int i, j;
+	i = 0; j = 0;
+	for (int k = 0; k < sizeLeft + sizeRight; ++k) {
+		if (i < sizeLeft && (j >= sizeRight || numbersLeft[i] < numbersRight[j])) {
+			sorted[k] = numbersLeft[i];
+			i++;
+		} else {
+			sorted[k] = numbersRight[j];
+			j++;
+		}
+	}
+}
+
+void mergeWithOne(int* numbers, int begin, int middle, int end, int * sorted) {
 	int i, j;
 	i = begin; j = middle;
-	debug("Merging. Begin: %d, Middle: %d, End: %d\n", begin, middle, end);
 	for (int k = begin; k < end; ++k) {
-		debug("LHS[%d]: %d, RHS[%d]: %d\n", i, numbers[i], j, numbers[j]);
 		if (i < middle && (j >= end || numbers[i] < numbers[j])) {
 			sorted[k] = numbers[i];
 			i++;
@@ -135,8 +147,6 @@ void merge(int* numbers, int begin, int middle, int end, int * sorted) {
 		}
 	}
 }
-
-
 /*
  * Merge sort recursive step adapted for a concurrent context 
  */
@@ -147,76 +157,84 @@ void recursive_merge_sort(int* tmp, int begin, int end, int* numbers) {
 		int middle = (begin + end)/2;
 		recursive_merge_sort(numbers, begin, middle, tmp);
 		recursive_merge_sort(numbers, middle, end, tmp);
-		merge(tmp, begin, middle, end, numbers);
+		mergeWithOne(tmp, begin, middle, end, numbers);
 	}
 }
 
 // First Merge Sort call (Called from process 0)
-void merge_sort(int* numbers, int size, int * tmp) {
+void merge_sortWithTwo(int *arrayLeft, int sizeLeft, int *arrayRight, int sizeRight, int *tmp) {
+	// In this function the pararel region is defined
+	int *tmpAux1, *tmpAux2;
+	if (sizeLeft > 1) {
+		tmpAux1 = malloc(sizeLeft * sizeof(int));
+		memcpy(tmpAux1, arrayLeft, sizeLeft * sizeof(int));
+		recursive_merge_sort(tmpAux1, 0, sizeLeft, arrayLeft);
+	}
+	if (sizeRight > 1) {
+		tmpAux2 = malloc(sizeRight * sizeof(int));
+		memcpy(tmpAux2, arrayRight, sizeRight * sizeof(int));
+		recursive_merge_sort(tmpAux2, 0, sizeRight, arrayRight);
+	}
+	print_array(arrayLeft, sizeLeft);
+	free(tmpAux1);
+	print_array(arrayRight, sizeRight);
+	free(tmpAux2);
+	mergeWithTwo(arrayLeft, arrayRight, sizeLeft, sizeRight, tmp);
+}
+
+void merge_sortWithOne(int* numbers, int size, int * tmp) {
 	// In this function the pararel region is defined
 	recursive_merge_sort(numbers, 0, size, tmp);
 }
 
-// Todos os processo necessitam saber o nivel atual da arvore
-// pois sera feita verificação a fim de descobrir se aquele processo
-// pode ser ativado naquele nivel da arvore (e receber msgs, etc..)
-void  comunicarStep(){
-	MPI_Bcast(&step, 1, MPI_INT, 0, myCOMM);
-	if (!activated) {
-		if (rank < pow(2, step)) {
-			receiveArrayToDivide();
-		} else {
-			comunicarStep();
-		}
-	}
-	// Processos que ja estao ativados devem retornar ao metodo
-	// ja sendo executado (recursiveDivideArrayReceived)
-}	
-
 void sendInfosToProcess(int *rightArray, int rightSize, int dest) {
-	MPI_Send(&rightSize, 1, MPI_INT, dest, 0, myCOMM); 
-	MPI_Send(rightArray, rightSize, MPI_INT, dest, 1, myCOMM);
+	MPI_Send(&step, 1, MPI_INT, dest, 0, myCOMM);
+	MPI_Send(&rightSize, 1, MPI_INT, dest, 1, myCOMM); 
+	MPI_Send(rightArray, rightSize, MPI_INT, dest, 2, myCOMM);
 }
 
 void receiveArrayToDivide() {
-	// é necessario calcular qual o source de um rank no step atual
-	int source = rank - pow(2, (step-1)), arraySize;
+	MPI_Recv(&step, 1, MPI_INT, MPI_ANY_SOURCE, 0, myCOMM, NULL);
+	if (step != -1) {
+		int arraySize;
+		MPI_Recv(&arraySize, 1, MPI_INT, MPI_ANY_SOURCE, 1, myCOMM, NULL);
 
-	MPI_Recv(&arraySize, 1, MPI_INT, source, 0, myCOMM, NULL);
+		int* arrayRecv = (int *) malloc(arraySize * sizeof(int));
 
-	int* arrayRecv = (int *) malloc(arraySize * sizeof(int));
+		MPI_Recv(arrayRecv, arraySize, MPI_INT, MPI_ANY_SOURCE, 2, myCOMM, NULL);
 
-	MPI_Recv(arrayRecv, arraySize, MPI_INT, source, 1, myCOMM, NULL);
-
-	recursiveDivideArrayReceived(arrayRecv, arraySize);
+		recursiveDivideArrayReceived(arrayRecv, arraySize);
+	} else {
+		printf("Rank %d nao necessario \n", rank);
+	}
 }
 
 void recursiveDivideArrayReceived(int* arrayReceived, int arraySize) {
-	activated = 1;
-
 	// Calcular qual processo deve receber o array direito para dividir
 	// Calculo baseado nos "steps" de uma arvore
 	int dest = rank + pow(2, step);
-
 	step++;
-	comunicarStep();
 
+	int **resp = divideArray(arrayReceived, arraySize);
 	// Verifica se existe o destino calculado e se o tamanho do array
 	// a ser enviado a ele é relavante (>1), se 
 	if ((arraySize > 3) && (dest < quant_processes)) {
-		int **resp = divideArray(arrayReceived, arraySize);
 
 		sendInfosToProcess(resp[3], *resp[2], dest);
 		recursiveDivideArrayReceived(resp[1], *resp[0]);
 	} else {
+		if (dest < quant_processes) {
+			int sendInfo = -1;
+			MPI_Send(&sendInfo, 1, MPI_INT, dest, 0, myCOMM);
+		}
+
 		int* tmp = malloc(arraySize * sizeof(int));
 		memcpy(tmp, arrayReceived, arraySize * sizeof(int));
+		merge_sortWithTwo(resp[1], *resp[0], resp[3], *resp[2], tmp);
+		//print_array(tmp, arraySize); 
+	}
 
-		merge_sort(arrayReceived, arraySize, tmp); 
 
-		print_array(tmp, arraySize);
-		MPI_Barrier(myCOMM);
-	}	
 
 }
 
@@ -242,16 +260,13 @@ int** divideArray(int* numbers, int size) {
 	int* rightSize = (int *) malloc(sizeof(int));
 
 	// Definicao de valores para cada size
-	if (size % 2 == 0) {
+	// definicao esta errada
+	if (size % 2 == 0)
 		*leftSize = ((int)(size/2));
-		if (*leftSize % 2 != 0)
-			*leftSize += 1;
-	} else {
-		*leftSize = ((int)(size/2))-1;
-	}
+	else
+		*leftSize = ((int)(size/2))+1;	
 
 	*rightSize = (size - *leftSize);
-
 	// Vetores de valores após divisao em 2 partes
 	int* left = (int *) malloc(*leftSize * sizeof(int));
 	int* right = (int *) malloc(*rightSize * sizeof(int));
@@ -276,8 +291,9 @@ void print_array(int* array, int size) {
 	printf("]\n");
 }
 
-void populate_array(int* array, int size, int max) {
+void populate_array(int* array, int size, int max, int seed) {
 	int m = max+1;
+	srand(seed);
 	for (int i = 0; i < size; ++i) {
 		array[i] = rand()%m;
 	}
@@ -289,6 +305,8 @@ int informaNumeroMaxDeProcessosNecessarios(int argc, char** argv){
 		nElem = NELEMENTS;
 	else 
 		nElem = (atoi(argv[2]));
+
+	int cont = 0;
 
 	return nElem/2;
 }
@@ -358,64 +376,5 @@ void initializeVariables(int argc, char ** argv, int* seed, int* max_val, int* p
 		default:
 		printf("Too many arguments\n");
 		exit(1);	
-	}
-}
-
-int test() {
-		// Basic MERGE unit test
-	if (DEBUG > 1) {
-		int * a = (int*)malloc(8*sizeof(int));
-		a[0] = 1; a[1] = 3; a[2] = 4; a[3] = 7;
-		a[4] = 0; a[5] = 2; a[6] = 5; a[7] = 6;
-		int * values = (int*)malloc(8*sizeof(int));
-		merge(a, 0, 4, 8, values);
-		free (a);
-		print_array(values, 8);
-		free(values);
-		return 2;
-	}
-
-	// Basic MERGE-SORT unit test
-	if (DEBUG > 0) {
-		int * a = (int*)malloc(8*sizeof(int));
-		int * b = (int*)malloc(8*sizeof(int));
-		a[0] = 7; a[1] = 6; a[2] = 5; a[3] = 4;
-		a[4] = 3; a[5] = 2; a[6] = 1; a[7] = 0;
-
-		b = memcpy(b, a, 8*sizeof(int));
-		merge_sort(a, 8, b);
-		print_array(b, 8);
-
-		free(a);
-		free(b);
-
-		a = (int*)malloc(9*sizeof(int));
-		b = (int*)malloc(9*sizeof(int));
-		a[0] = 3; a[1] = 2; a[2] = 1; 
-		a[3] = 10; a[4] = 11; a[5] = 12; 
-		a[6] = 0; a[7] = 1; a[8] = 1;
-
-		b = memcpy(b, a, 9*sizeof(int));
-		print_array(b, 9);
-
-		merge_sort(a, 9, b);
-		print_array(b, 9);
-
-		free(a);
-		free(b);
-		printf("\n");
-		return 1;
-	}
-}
-
-/*
- * More info on: http://en.cppreference.com/w/c/language/variadic
- */
-void debug(const char* msg, ...) {
-	if (DEBUG > 2) {
-		va_list args;
-		va_start(args, msg); 
-		vprintf(msg, args); 
-		va_end(args);
 	}
 }
