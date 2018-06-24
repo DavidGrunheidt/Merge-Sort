@@ -216,12 +216,15 @@ void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infos
 		step++;
 
 		sendInfosToProcess(resp[3], *resp[2], dest);
-		recursiveDivideArrayReceived(resp[1], *resp[0], infosDecida	);
+
+		free(arrayReceived);
+		free(resp[2]);
+		free(resp[3]);
+
+		recursiveDivideArrayReceived(resp[1], *resp[0], infosDecida);
 
 		free(resp[0]);	
 		free(resp[1]);
-		free(resp[2]);
-		free(resp[3]);
 		free(resp);
 	} else {
 		if (dest < quant_processes) {
