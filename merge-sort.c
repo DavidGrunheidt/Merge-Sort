@@ -40,11 +40,13 @@ void recursive_merge_sort(int* tmp, int begin, int end, int* numbers);
 
 // Funcoes para comunicacao de processos e funcoes auxiliares a estas
 void receiveInfos();
-void sortBack(int *rightArray, int rightSize);
+void sortBack(int *rightArray, int rightSize, int **sorted);
 void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infosDecida);
 int** divideArray(int* numbers, int size);
 void receiveArrayToDivide(int **infosDecida);
 void sendInfosToProcess(int *rightArray, int rightSize, int dest);
+void sendSortedArrayBack(int *sortedArray, int size, int dest);
+int* receiveArrayBack(int *sizeRight, int source);
 
 // variaveis  para controle do ambiente MPI
 int quant_processes, rank;
@@ -77,11 +79,9 @@ int main (int argc, char ** argv) {
 
 		// Alocacao de memoria
 		sortable = malloc(arr_size*sizeof(int));
-		tmp 	 = malloc(arr_size*sizeof(int));
 
 		// Inserção de valores no array original
 		populate_array(sortable, arr_size, max_val, seed);
-		memcpy(tmp, sortable, arr_size*sizeof(int));
 
 		if (print)
 			print_array(sortable, arr_size);
@@ -89,6 +89,9 @@ int main (int argc, char ** argv) {
 		if (quant_processes > 1) {
 			recursiveDivideArrayReceived(sortable, arr_size, infosDecida);
 		} else {
+			tmp 	 = malloc(arr_size*sizeof(int));
+			memcpy(tmp, sortable, arr_size*sizeof(int));
+
 			merge_sort(sortable, arr_size, tmp);
 			if (print)
 				print_array(tmp, arr_size);
@@ -102,18 +105,24 @@ int main (int argc, char ** argv) {
 
 	}
 
-	printf("Rank %d, lastArray size = %d\n", rank, *infosDecida[0]);
+	int* firstSorted = malloc(*infosDecida[0] * sizeof(int));
+	memcpy(firstSorted, infosDecida[1], *infosDecida[0] * sizeof(int));
 
-	//int* tmpAux = malloc(*infosDecida[0] * sizeof(int));
-	//memcpy(tmpAux, infosDecida[1], *infosDecida[0] * sizeof(int));
+	merge_sort(infosDecida[1], *infosDecida[0], firstSorted);
+	int firstSortedSize = *infosDecida[0];
 
-	//merge_sort(infosDecida[1], *infosDecida[0], tmpAux);
-	//print_array(tmpAux, *infosDecida[0]);
-
-	//free(infosDecida[0]);
-	//free(infosDecida[1]);
-
+	free(infosDecida[0]);
+	free(infosDecida[1]);
 	free(infosDecida);
+
+	int **sorted;
+	sortBack(firstSorted, firstSortedSize, sorted);
+
+	if (print)
+		print_array(*sorted, arr_size);
+
+	free(*sorted);
+
 	MPI_Finalize();
 	return 0;
 }
@@ -199,19 +208,17 @@ void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infos
 	// Calcular qual processo deve receber o array direito para dividir
 	// Calculo baseado nos "steps" de uma arvore
 	int dest = rank + pow(2, step);
-	step++;
 
 	// Verifica se existe o destino calculado e se o tamanho do array
 	// a ser enviado a ele é relavante (>1), se 
 	if ((arraySize > 3) && (dest < quant_processes)) {
 		int **resp = divideArray(arrayReceived, arraySize);
-
-		free(arrayReceived);
+		step++;
 
 		sendInfosToProcess(resp[3], *resp[2], dest);
 		recursiveDivideArrayReceived(resp[1], *resp[0], infosDecida	);
 
-		free(resp[0]);
+		free(resp[0]);	
 		free(resp[1]);
 		free(resp[2]);
 		free(resp[3]);
@@ -227,26 +234,55 @@ void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infos
 		int *finalArray = (int*) malloc (arraySize * sizeof(int));
 		memcpy(finalArray, arrayReceived, arraySize * sizeof(int));
 
-		free(arrayReceived);
-
 		infosDecida[0] = finalSize;
 		infosDecida[1] = finalArray;
-		printf("Rank %d, lastArray size = %d\n", rank, *infosDecida[0]);
 	}
 }
 
-void sortBack(int *arrayLeft, int sizeLeft) {
+void sendSortedArrayBack(int *sortedArray, int size, int dest) {
+	MPI_Send(&size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
+	MPI_Send(sortedArray, size, MPI_INT, dest, 1, MPI_COMM_WORLD);
+
+	free(sortedArray);
+
+	MPI_Finalize();
+	exit(0);
+}
+
+int* receiveArrayBack(int *sizeRight, int source) {
+	MPI_Recv(sizeRight, 1, MPI_INT, source, 0, MPI_COMM_WORLD, NULL);
+	int* arrayRight = malloc (*sizeRight * sizeof(int));
+	MPI_Recv(arrayRight, *sizeRight, MPI_INT, source, 1, MPI_COMM_WORLD, NULL);
+	return arrayRight;
+}
+
+void sortBack(int *arrayLeft, int sizeLeft, int** sorted) {
 	int dest = rank - pow(2, step-1);
 
+	if (dest < 0) {
+		int source = rank + pow(2,step-1);
+		int sizeRight;
+		int *arrayRight;
 
+		arrayRight = receiveArrayBack(&sizeRight, source);
+		step--;
 
-	int sizeRight;
-	//
-	int *arrayRight;
+		int sizeAux = sizeLeft + sizeRight;
 
-	int *tmp = malloc((sizeLeft + sizeRight) * sizeof(int));
-	mergeWithTwo(arrayLeft, arrayRight, sizeLeft, sizeRight, tmp);
+		int *tmp = malloc(sizeAux * sizeof(int));
+		mergeWithTwo(arrayLeft, arrayRight, sizeLeft, sizeRight, tmp);
 
+		free(arrayLeft);
+		free(arrayRight);
+
+		if (step != 0) {
+			sortBack(tmp, sizeAux, sorted);
+		} else {
+			*sorted = tmp;
+		}
+	} else {
+		sendSortedArrayBack(arrayLeft, sizeLeft, dest);
+	}
 }
 
 // Func retorna diversas informacoes em um ponteiro de ponteiros:
@@ -287,7 +323,7 @@ int** divideArray(int* numbers, int size) {
 }
 
 void print_array(int* array, int size) {
-	printf("Array do rank %d = [ ", rank);
+	printf("Array = [ ");
 	for (int i = 0; i < size; i++) 
 		printf("%d ", array[i]);
 	printf("]\n");
