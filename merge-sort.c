@@ -39,9 +39,8 @@ void recursive_merge_sort(int* tmp, int begin, int end, int* numbers);
 
 
 // Funcoes para comunicacao de processos e funcoes auxiliares a estas
-void receiveInfos();
 void sortBack(int *rightArray, int rightSize, int **sorted);
-void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infosDecida);
+void recursiveDivideArrayReceived(int* arrayReceived, int* arraySize, int **infosDecida);
 int** divideArray(int* numbers, int size);
 void receiveArrayToDivide(int **infosDecida);
 void sendInfosToProcess(int *rightArray, int rightSize, int dest);
@@ -87,7 +86,9 @@ int main (int argc, char ** argv) {
 			print_array(sortable, arr_size);
 
 		if (quant_processes > 1) {
-			recursiveDivideArrayReceived(sortable, arr_size, infosDecida);
+			int *arraySize = malloc(sizeof(int));
+			*arraySize = arr_size;
+			recursiveDivideArrayReceived(sortable, arraySize, infosDecida);
 		} else {
 			tmp 	 = malloc(arr_size*sizeof(int));
 			memcpy(tmp, sortable, arr_size*sizeof(int));
@@ -98,6 +99,8 @@ int main (int argc, char ** argv) {
 
 			free(sortable);
 			free(tmp);
+			MPI_Finalize();
+			exit(0);
 		}
 	} else {
 		if (rank > 0)
@@ -115,13 +118,20 @@ int main (int argc, char ** argv) {
 	free(infosDecida[1]);
 	free(infosDecida);
 
-	int **sorted;
-	sortBack(firstSorted, firstSortedSize, sorted);
+	if (step != 0) {
+		int **sorted;
+		sortBack(firstSorted, firstSortedSize, sorted);
 
-	if (print)
-		print_array(*sorted, arr_size);
+		if (print)
+			print_array(*sorted, arr_size);
 
-	free(*sorted);
+		free(sorted[0]);
+	} else {
+		if(print)
+			print_array(firstSorted, firstSortedSize);
+	}
+
+	free(firstSorted);
 
 	MPI_Finalize();
 	return 0;
@@ -185,12 +195,12 @@ void sendInfosToProcess(int *rightArray, int rightSize, int dest) {
 void receiveArrayToDivide(int **infosDecida) {
 	MPI_Recv(&step, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
 	if (step != -1) {
-		int arraySize;
-		MPI_Recv(&arraySize, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, NULL);
+		int*  arraySize = malloc(sizeof(int));
+		MPI_Recv(arraySize, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, NULL);
 
-		int* arrayRecv = (int *) malloc(arraySize * sizeof(int));
+		int* arrayRecv = (int *) malloc(*arraySize * sizeof(int));
 
-		MPI_Recv(arrayRecv, arraySize, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, NULL);
+		MPI_Recv(arrayRecv, *arraySize, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, NULL);
 
 		recursiveDivideArrayReceived(arrayRecv, arraySize, infosDecida);
 	} else {
@@ -204,41 +214,35 @@ void receiveArrayToDivide(int **infosDecida) {
 	}
 }
 
-void recursiveDivideArrayReceived(int* arrayReceived, int arraySize, int **infosDecida) {
+void recursiveDivideArrayReceived(int* arrayReceived, int* arraySize, int **infosDecida) {
 	// Calcular qual processo deve receber o array direito para dividir
 	// Calculo baseado nos "steps" de uma arvore
 	int dest = rank + pow(2, step);
 
 	// Verifica se existe o destino calculado e se o tamanho do array
 	// a ser enviado a ele é relavante (>1), se 
-	if ((arraySize > 3) && (dest < quant_processes)) {
-		int **resp = divideArray(arrayReceived, arraySize);
+	if ((*arraySize > 3) && (dest < quant_processes)) {
+		int **resp = divideArray(arrayReceived, *arraySize);
 		step++;
 
 		sendInfosToProcess(resp[3], *resp[2], dest);
 
+		free(arraySize);
 		free(arrayReceived);
 		free(resp[2]);
 		free(resp[3]);
 
-		recursiveDivideArrayReceived(resp[1], *resp[0], infosDecida);
+		recursiveDivideArrayReceived(resp[1], resp[0], infosDecida);
 
-		free(resp[0]);	
-		free(resp[1]);
 		free(resp);
 	} else {
 		if (dest < quant_processes) {
 			int sendInfo = -1;
 			MPI_Send(&sendInfo, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
 		}
-		int *finalSize = (int *) malloc (sizeof(int));
-		*finalSize = arraySize;
 
-		int *finalArray = (int*) malloc (arraySize * sizeof(int));
-		memcpy(finalArray, arrayReceived, arraySize * sizeof(int));
-
-		infosDecida[0] = finalSize;
-		infosDecida[1] = finalArray;
+		infosDecida[0] = arraySize;
+		infosDecida[1] = arrayReceived;
 	}
 }
 
